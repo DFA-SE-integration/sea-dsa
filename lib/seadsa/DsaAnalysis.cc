@@ -6,7 +6,10 @@
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <chrono>
 
 #include "seadsa/AllocWrapInfo.hh"
 #include "seadsa/DsaLibFuncInfo.hh"
@@ -107,7 +110,18 @@ bool DsaAnalysis::runOnModule(Module &M) {
         true /* always store summary graphs*/));
   }
 
+  // Measure core PTA analysis time (similar to Phasar's Timer approach)
+  auto start_time = std::chrono::steady_clock::now();
   m_ga->runOnModule(M);
+  auto end_time = std::chrono::steady_clock::now();
+  auto elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time);
+  auto total_us = std::chrono::duration_cast<std::chrono::microseconds>(elapsed_ns).count();
+  long sec = total_us / 1000000;
+  long us = total_us % 1000000;
+  long h = sec / 3600;
+  long m = (sec % 3600) / 60;
+  long s = sec % 60;
+  errs() << "Elapsed: " << llvm::format("%.2ld:%.2ld:%.2ld:%.6ld", h, m, s, us) << "\n";
 
   if (XDsaStats || m_print_stats) {
     DsaInfo i(*m_dl, *m_tliWrapper, getDsaAnalysis());
