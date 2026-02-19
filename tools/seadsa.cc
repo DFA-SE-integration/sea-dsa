@@ -30,6 +30,7 @@
 #include "seadsa/ShadowMem.hh"
 #include "seadsa/support/Debug.h"
 #include "seadsa/support/RemovePtrToInt.hh"
+#include "ValidateAliasTests.hh"
 
 static llvm::cl::opt<std::string>
     InputFilename(llvm::cl::Positional,
@@ -180,7 +181,9 @@ int main(int argc, char **argv) {
 
   // -- add to pass manager
   pass_manager.add(seadsa::createDsaLibFuncInfoPass());
-  pass_manager.add(seadsa::createSeaDsaAAWrapperPass());
+  seadsa::SeaDsaAAWrapperPass *seaDsaAAPass =
+      static_cast<seadsa::SeaDsaAAWrapperPass *>(seadsa::createSeaDsaAAWrapperPass());
+  pass_manager.add(seaDsaAAPass);
   // -- make available through AAResultsWrapperPass via ExternalAAWrapperPass
   pass_manager.add(llvm::createExternalAAWrapperPass(
       [](llvm::Pass &P, llvm::Function &, llvm::AAResults &AAR) {
@@ -235,6 +238,11 @@ int main(int argc, char **argv) {
     pass_manager.add(createPrintModulePass(asmOutput->os()));
 
   pass_manager.run(*module.get());
+
+  // Validate alias checks from Test-Suite
+  if (seaDsaAAPass && !runValidateAliasTests(*module.get(), seaDsaAAPass->getResult())) {
+    return 1;
+  }
 
   if (!AsmOutputFilename.empty()) asmOutput->keep();
 
