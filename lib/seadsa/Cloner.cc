@@ -1,8 +1,10 @@
 #include "seadsa/Cloner.hh"
 #include "seadsa/CallSite.hh"
+#include "seadsa/PtrTypeUtils.hh"
 #include "seadsa/support/Debug.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/CommandLine.h"
+#include <optional>
 using namespace seadsa;
 
 static llvm::cl::opt<bool> NoAllocSiteOpt(
@@ -24,13 +26,14 @@ static bool isConstantNoPtr(const llvm::Value *v) {
     return false;
 
   // Cheaply check if the global value has a string-like name.
-  if (v->hasName() && v->getName().startswith(".str."))
+  if (v->hasName() && v->getName().starts_with(".str."))
     return true;
 
   if (!v->getType()->isPointerTy())
     return false;
 
-  auto *type = v->getType()->getPointerElementType();
+  auto *type = seadsa::recoverPointeeType(v);
+  if (!type) return false;
   if (type->isIntegerTy() || type->isFloatingPointTy())
     return true;
 
@@ -185,14 +188,14 @@ void Cloner::copyAllocationSites(
 }
 
 void Cloner::importCallPaths(DsaAllocSite &site,
-                             llvm::Optional<DsaAllocSite *> other) {
+                             std::optional<DsaAllocSite *> other) {
   if (isUnset())
     return;
 
-  assert(other.hasValue());
-  if (!other.hasValue())
+  assert(other.has_value());
+  if (!other.has_value())
     return;
 
-  site.importCallPaths(*other.getValue(),
-                       DsaCallSite(*m_context.m_cs.getValue()), isBottomUp());
+  site.importCallPaths(*other.value(),
+                       DsaCallSite(*m_context.m_cs.value()), isBottomUp());
 }

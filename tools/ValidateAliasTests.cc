@@ -3,7 +3,7 @@
 #include "ValidateAliasTests.hh"
 #include "seadsa/SeaDsaAliasAnalysis.hh"
 
-#include "llvm/ADT/Optional.h"
+#include <optional>
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/IR/DebugInfoMetadata.h"
@@ -50,16 +50,16 @@ bool isAliasCheckCall(const Function *F) {
 
 enum class CheckKind { MAYALIAS, NOALIAS, MUSTALIAS, PARTIALALIAS };
 
-llvm::Optional<CheckKind> getCheckKind(StringRef Name) {
-  if (Name == "MAYALIAS" || Name.startswith("_Z8MAYALIAS"))
+std::optional<CheckKind> getCheckKind(StringRef Name) {
+  if (Name == "MAYALIAS" || Name.starts_with("_Z8MAYALIAS"))
     return CheckKind::MAYALIAS;
-  if (Name == "NOALIAS" || Name.startswith("_Z7NOALIAS"))
+  if (Name == "NOALIAS" || Name.starts_with("_Z7NOALIAS"))
     return CheckKind::NOALIAS;
-  if (Name == "MUSTALIAS" || Name.startswith("_Z9MUSTALIAS"))
+  if (Name == "MUSTALIAS" || Name.starts_with("_Z9MUSTALIAS"))
     return CheckKind::MUSTALIAS;
-  if (Name == "PARTIALALIAS" || Name.startswith("_Z12PARTIALALIAS"))
+  if (Name == "PARTIALALIAS" || Name.starts_with("_Z12PARTIALALIAS"))
     return CheckKind::PARTIALALIAS;
-  return llvm::None;
+  return std::nullopt;
 }
 
 bool checkSucceeded(CheckKind Kind, AliasResult Result) {
@@ -89,7 +89,7 @@ const char *checkKindStr(CheckKind Kind) {
 
 bool seadsa::runValidateAliasTests(Module &M, SeaDsaAAResult &AA) {
   const DataLayout &DL = M.getDataLayout();
-  AAQueryInfo AAQI(nullptr);
+  (void)DL;
   bool anyFailure = false;
 
   for (Function &F : M) {
@@ -104,8 +104,8 @@ bool seadsa::runValidateAliasTests(Module &M, SeaDsaAAResult &AA) {
         if (CI->arg_size() < 2)
           continue;
 
-        llvm::Optional<CheckKind> Kind = getCheckKind(Callee->getName());
-        if (!Kind.hasValue())
+        std::optional<CheckKind> Kind = getCheckKind(Callee->getName());
+        if (!Kind.has_value())
           continue;
 
         Value *V1 = CI->getArgOperand(0);
@@ -115,8 +115,8 @@ bool seadsa::runValidateAliasTests(Module &M, SeaDsaAAResult &AA) {
         MemoryLocation MemLoc1 = MemoryLocation::getBeforeOrAfter(V1);
         MemoryLocation MemLoc2 = MemoryLocation::getBeforeOrAfter(V2);
 
-        AliasResult Result = AA.alias(MemLoc1, MemLoc2, AAQI);
-        CheckKind KindVal = Kind.getValue();
+        AliasResult Result = AA.alias(MemLoc1, MemLoc2);
+        CheckKind KindVal = Kind.value();
         bool success = checkSucceeded(KindVal, Result);
         std::string Loc = formatSourceLoc(&I);
 

@@ -4,6 +4,8 @@
 #include "llvm/IR/Type.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "seadsa/PtrTypeUtils.hh"
+
 #include <string>
 #include <tuple>
 
@@ -92,9 +94,7 @@ public:
   FieldType elemOf() const {
     assert(!isUnknown());
     assert(isPointer());
-
-    auto *NewTy = m_ty->getPointerElementType();
-    return FieldType(NewTy);
+    return FieldType::mkUnknown();
   }
 
   void dump(llvm::raw_ostream &OS = llvm::errs()) const {

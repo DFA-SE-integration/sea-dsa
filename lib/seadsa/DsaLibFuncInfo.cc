@@ -19,6 +19,7 @@
 #include "seadsa/support/Debug.h"
 #include <fstream>
 #include <iostream>
+#include <stack>
 #include <unordered_set>
 
 static llvm::cl::list<std::string>
@@ -257,7 +258,8 @@ void DsaLibFuncInfo::generateSpec(const llvm::Function &F,
 
   // sets the attributes that the original node has onto the spec graph value
   auto setAttributes = [&](const Node *gNode, Value *specVal) {
-    auto bitCastVal = builder.CreateBitCast(specVal, builder.getInt8PtrTy());
+    auto bitCastVal = builder.CreateBitCast(
+        specVal, llvm::PointerType::get(builder.getInt8Ty(), 0));
 
     if (gNode->isModified()) { builder.CreateCall(specFnModify, bitCastVal); }
     if (gNode->isHeap()) { builder.CreateCall(specFnHeap, bitCastVal); }
@@ -281,13 +283,14 @@ void DsaLibFuncInfo::generateSpec(const llvm::Function &F,
     if (!G->hasCell(*fIt)) continue;
 
     Value &v = *specIt;
-    Value *castVal = builder.CreateBitCast(&v, builder.getInt8PtrTy());
+    Value *castVal = builder.CreateBitCast(
+        &v, llvm::PointerType::get(builder.getInt8Ty(), 0));
     visitStack.push({G->getCell(*fIt).getNode(), castVal});
   }
 
   Value *retVal = nullptr;
   if (F.getReturnType()->isPointerTy() && G->hasRetCell(F)) {
-    retVal = builder.CreateCall(specFnMk, llvm::None, "ret");
+    retVal = builder.CreateCall(specFnMk, {}, "ret");
     visitStack.push({G->getRetCell(F).getNode(), retVal});
   }
 
@@ -317,7 +320,8 @@ void DsaLibFuncInfo::generateSpec(const llvm::Function &F,
           castChild = builder.CreateBitCast(newNodeVal, ty);
         else
           castChild = builder.CreateBitCast(
-              newNodeVal, llvm::Type::getInt8PtrTy(m_specModule->getContext()));
+              newNodeVal,
+              llvm::PointerType::get(Type::getInt8Ty(m_specModule->getContext()), 0));
         builder.CreateCall(linkFn, {specVal, llvmOffset, castChild});
 
         visitStack.push({link.second->getNode(), newNodeVal});
@@ -356,7 +360,7 @@ void DsaLibFuncInfo::generateSpec(const llvm::Function &F,
     builder.CreateRet(retVal);
   } else if (!retVal && F.getReturnType()->getTypeID()) {
     retVal = builder.CreateAlloca(F.getReturnType(), nullptr);
-    Value *loadedRet = builder.CreateLoad(retVal->getType()->getPointerElementType(), retVal);
+    Value *loadedRet = builder.CreateLoad(F.getReturnType(), retVal);
     builder.CreateRet(loadedRet);
   }
 }

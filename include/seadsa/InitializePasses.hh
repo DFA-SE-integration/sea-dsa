@@ -12,5 +12,4 @@ void initializeCompleteCallGraphPass(PassRegistry &);
 void initializeDsaInfoPassPass(PassRegistry &);
 void initializeShadowMemPassPass(PassRegistry &);
 void initializeStripShadowMemPassPass(PassRegistry &);
-void initializeSeaDsaAAWrapperPassPass(PassRegistry &);
 } // namespace llvm

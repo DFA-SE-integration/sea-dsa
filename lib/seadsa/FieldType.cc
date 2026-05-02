@@ -38,19 +38,13 @@ llvm::Type *GetInnermostTypeImpl(llvm::Type *const Ty, SeenTypes &seen) {
   while (!seen.count(currentTy)) {
     seen.insert(currentTy);
 
-    if (currentTy->isPointerTy()) {
-      auto *ElemTy = currentTy->getPointerElementType();
-      currentTy = GetInnermostTypeImpl(ElemTy, seen)
-                      ->getPointerTo(currentTy->getPointerAddressSpace());
-      break;
-    }
+    if (currentTy->isPointerTy()) break;
 
     auto It = AggregateIterator::mkBegin(currentTy, /* DL = */ nullptr);
     auto *FirstTy = It->Ty;
     if (!FirstTy) break;
 
-    if (FirstTy->isPointerTy() && FirstTy->getPointerElementType() == currentTy)
-      break;
+    if (FirstTy->isPointerTy()) break;
 
     if (FirstTy == currentTy) break;
 
@@ -85,8 +79,8 @@ static bool IsOmnipotentChar(llvm::Type *const Ty) {
 }
 
 static bool IsOmnipotentPtr(llvm::Type *const Ty) {
-  auto res = Ty->isPointerTy() && IsOmnipotentChar(Ty->getPointerElementType());
-  return res;
+  (void)Ty;
+  return false;
 }
 
 FieldType::FieldType(llvm::Type *Ty) {

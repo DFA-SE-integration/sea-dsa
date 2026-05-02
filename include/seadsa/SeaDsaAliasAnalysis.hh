@@ -1,11 +1,16 @@
 // ==- SeaDsaAliasAnalysis.hh - DSA-based Alias Analysis  ==//
-
+//
+// LLVM 20 port:
+//   * `AAResultBase<T>` was dropped from LLVM 20; the SeaDsa AA is now a
+//     standalone provider used directly by our driver/evaluator rather than
+//     plugged into the LLVM AA aggregation pipeline.
+//   * `SeaDsaAAWrapperPass` is gone for the same reason.
+//
 #pragma once
 
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/IR/PassManager.h"
-#include "llvm/Pass.h"
 
 #include "seadsa/Graph.hh"
 
@@ -13,9 +18,10 @@
 
 namespace llvm {
 class CallGraph;
+class DataLayout;
 class Function;
-class MemoryLocation;
-class TargetLibraryInfoWrapper;
+class Module;
+class Value;
 } // namespace llvm
 
 namespace seadsa {
@@ -24,51 +30,42 @@ class AllocWrapInfo;
 class DsaLibFuncInfo;
 class BottomUpTopDownGlobalAnalysis;
 
-class SeaDsaAAResult : public llvm::AAResultBase<SeaDsaAAResult> {
-  using Base = llvm::AAResultBase<SeaDsaAAResult>;
-  friend Base;
-
+/// Standalone SeaDsa-based alias analysis.
+///
+/// Use \c runOnModule once, then repeatedly issue \c alias() queries.
+class SeaDsaAAResult {
 public:
   explicit SeaDsaAAResult(llvm::TargetLibraryInfoWrapperPass &tliWrapper,
                           AllocWrapInfo &AWI, DsaLibFuncInfo &dlfi);
 
+  SeaDsaAAResult(const SeaDsaAAResult &) = delete;
+  SeaDsaAAResult &operator=(const SeaDsaAAResult &) = delete;
   SeaDsaAAResult(SeaDsaAAResult &&RHS);
   ~SeaDsaAAResult();
 
-  bool invalidate(llvm::Function &F, const llvm::PreservedAnalyses &,
-                  llvm::FunctionAnalysisManager::Invalidator &) {
-    return false;
-  }
+  /// Build the underlying SeaDsa graph for \p M.  Safe to call multiple times;
+  /// re-runs only happen when the module handle changes.
+  void runOnModule(llvm::Module &M);
 
-  llvm::AliasResult alias(const llvm::MemoryLocation &,
-                          const llvm::MemoryLocation &, llvm::AAQueryInfo &);
+  /// Query whether two pointer values may alias.
+  ///
+  /// Falls back to \c MayAlias whenever SeaDsa cannot prove disjointness or
+  /// the values live in different functions / modules.
+  llvm::AliasResult alias(const llvm::MemoryLocation &LocA,
+                          const llvm::MemoryLocation &LocB);
+
+  llvm::AliasResult alias(const llvm::Value *V1, const llvm::Value *V2);
 
 private:
   llvm::TargetLibraryInfoWrapperPass &m_tliWrapper;
-  const llvm::DataLayout *m_dl;
+  const llvm::DataLayout *m_dl = nullptr;
   AllocWrapInfo &m_awi;
   DsaLibFuncInfo &m_dlfi;
-  std::unique_ptr<Graph::SetFactory> m_fac; // node factory for seadsa
+
+  llvm::Module *m_module = nullptr;
+  std::unique_ptr<Graph::SetFactory> m_fac;
   std::unique_ptr<llvm::CallGraph> m_cg;
   std::unique_ptr<BottomUpTopDownGlobalAnalysis> m_dsa;
 };
 
-class SeaDsaAAWrapperPass : public llvm::ImmutablePass {
-
-  std::unique_ptr<SeaDsaAAResult> Result;
-
-public:
-  using AnalysisUsage = llvm::AnalysisUsage;
-  static char ID;
-
-  SeaDsaAAWrapperPass();
-
-  SeaDsaAAResult &getResult() { return *Result; }
-  const SeaDsaAAResult &getResult() const { return *Result; }
-
-  void initializePass() override;
-  void getAnalysisUsage(AnalysisUsage &AU) const override;
-};
-
-llvm::ImmutablePass *createSeaDsaAAWrapperPass();
 } // namespace seadsa

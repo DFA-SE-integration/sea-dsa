@@ -14,6 +14,7 @@ add_llvm_library (SeaDsaAnalysis DISABLE_LLVM_LINK_LLVM_DYLIB
   DsaPrinter.cc
   CallGraphWrapper.cc
   TypeUtils.cc
+  PtrTypeUtils.cc
   Debug.cc
   NameValues.cc
   RemovePtrToInt.cc
@@ -23,8 +24,6 @@ add_llvm_library (SeaDsaAnalysis DISABLE_LLVM_LINK_LLVM_DYLIB
   DsaCompleteCallGraph.cc
   DsaCallGraphPrinter.cc
   DsaColor.cc
-  ShadowMem.cc
-  SeaMemorySSA.cc
-  SeaDsaAliasAnalysis.cc
   DsaLibFuncInfo.cc
+  SeaDsaAliasAnalysis.cc
   )

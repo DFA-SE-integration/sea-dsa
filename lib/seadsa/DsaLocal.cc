@@ -19,6 +19,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -33,14 +34,17 @@
 #include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/IR/PatternMatch.h"
 
 #include "seadsa/AllocWrapInfo.hh"
 #include "seadsa/Graph.hh"
+#include "seadsa/PtrTypeUtils.hh"
 #include "seadsa/TypeUtils.hh"
 #include "seadsa/support/Debug.h"
 
 #include "boost/range/algorithm/reverse.hpp"
+#include <optional>
 
 using namespace llvm;
 
@@ -103,7 +107,7 @@ public:
   po_iterator_storage(BlockedEdges &VSet) : Visited(VSet) {}
   po_iterator_storage(const po_iterator_storage &S) : Visited(S.Visited) {}
 
-  bool insertEdge(Optional<const BasicBlock *> src, const BasicBlock *dst) {
+  bool insertEdge(std::optional<const BasicBlock *> src, const BasicBlock *dst) {
     return Visited.insert(dst);
   }
   void finishPostorder(const BasicBlock *bb) {}
@@ -169,7 +173,7 @@ Function *getCalledFunction(CallBase &CB) {
 namespace {
 // forward declaration
 std::pair<int64_t, uint64_t>
-computeGepOffset(Type *ptrTy, ArrayRef<Value *> Indicies, const DataLayout &dl);
+computeGepOffset(Type *srcElemTy, ArrayRef<Value *> Indicies, const DataLayout &dl);
 
 /*****************************************************************************/
 /* BlockBuilderBase */
@@ -279,7 +283,7 @@ class GlobalBuilder : public BlockBuilderBase {
 
     if (const ConstantVector *CP = dyn_cast<ConstantVector>(Init)) {
       unsigned ElementSize =
-          m_dl.getTypeAllocSize(CP->getType()->getElementType()).getFixedSize();
+          m_dl.getTypeAllocSize(CP->getType()->getElementType()).getFixedValue();
       for (unsigned i = 0, e = CP->getNumOperands(); i != e; ++i) {
         unsigned noffset = offset + i * ElementSize;
         seadsa::Cell nc = seadsa::Cell(c.getNode(), noffset);
@@ -293,7 +297,7 @@ class GlobalBuilder : public BlockBuilderBase {
     if (const ConstantArray *CPA = dyn_cast<ConstantArray>(Init)) {
       unsigned ElementSize =
           m_dl.getTypeAllocSize(CPA->getType()->getElementType())
-              .getFixedSize();
+              .getFixedValue();
       for (unsigned i = 0, e = CPA->getNumOperands(); i != e; ++i) {
         unsigned noffset = offset + i * ElementSize;
         seadsa::Cell nc = seadsa::Cell(c.getNode(), noffset);
@@ -316,9 +320,8 @@ class GlobalBuilder : public BlockBuilderBase {
     if (isa<ConstantDataSequential>(Init)) { return; }
 
     if (Init->getType()->isPointerTy() && !isa<ConstantPointerNull>(Init)) {
-      if (cast<PointerType>(Init->getType())
-              ->getElementType()
-              ->isFunctionTy()) {
+      if (Type *InitElemTy = seadsa::recoverPointeeType(Init);
+          InitElemTy && InitElemTy->isFunctionTy()) {
         seadsa::Node &n = m_graph.mkNode();
         seadsa::Cell nc(n, 0);
         seadsa::DsaAllocSite *site = m_graph.mkAllocSite(*Init);
@@ -355,11 +358,11 @@ public:
       : BlockBuilderBase(func, graph, dl, tli, allocInfo) {}
 
   void initGlobalVariables() {
-    if (!m_func.getName().equals("main")) return;
+    if (m_func.getName() != "main") return;
 
     Module &M = *(m_func.getParent());
     for (auto &gv : M.globals()) {
-      if (gv.getName().equals("llvm.used")) continue;
+      if (gv.getName() == "llvm.used") continue;
 
       if (gv.hasInitializer()) {
         seadsa::Cell c = valueCell(gv);
@@ -502,9 +505,9 @@ class IntraBlockBuilder : public InstVisitor<IntraBlockBuilder>,
     // may need to define multiple sea_dsa_link types. For example:
     // sea_dsa_link_to_charptr(const void *p, unsigned offset, const char*
     // p2);
-    if (fn->getName().startswith("sea_dsa_link"))
+    if (fn->getName().starts_with("sea_dsa_link"))
       fnType = SeadsaFn::LINK;
-    else if (fn->getName().startswith("sea_dsa_access"))
+    else if (fn->getName().starts_with("sea_dsa_access"))
       fnType = SeadsaFn::ACCESS;
 
     return fnType;
@@ -514,7 +517,7 @@ class IntraBlockBuilder : public InstVisitor<IntraBlockBuilder>,
   static bool isSeaDsaFn(const Function *fn) {
     if (!fn) return false;
     auto n = fn->getName();
-    return n.startswith("sea_dsa_");
+    return n.starts_with("sea_dsa_");
   }
 
   // return function pointer to seadsa::Node setter
@@ -787,7 +790,8 @@ void IntraBlockBuilder::visitAtomicRMWInst(AtomicRMWInst &I) {
 }
 
 static bool isBytePtrTy(const Type *ty) {
-  return ty->isPointerTy() && ty->getPointerElementType()->isIntegerTy(8);
+  (void)ty;
+  return false;
 }
 
 void IntraBlockBuilder::visitStoreInst(StoreInst &SI) {
@@ -842,8 +846,12 @@ void IntraBlockBuilder::visitStoreInst(StoreInst &SI) {
   Type *ty = ValOp->getType();
   if (isBytePtrTy(ty)) {
     Type *opTy = SI.getPointerOperand()->stripPointerCasts()->getType();
-    if (opTy->isPointerTy() && opTy->getPointerElementType()->isPointerTy())
-      ty = opTy->getPointerElementType();
+    if (opTy->isPointerTy()) {
+      if (Type *opElemTy = seadsa::recoverPointeeType(
+              SI.getPointerOperand()->stripPointerCasts())) {
+        if (opElemTy->isPointerTy()) ty = opElemTy;
+      }
+    }
   }
   base.addLink(Field(0, FieldType(ty)), dest);
 }
@@ -877,11 +885,15 @@ template <typename T> T gcd(T a, T b) {
    The first element of the pair is the fixed offset. The second is
    a gcd of the variable offset.
  */
-std::pair<int64_t, uint64_t> computeGepOffset(Type *ptrTy,
+std::pair<int64_t, uint64_t> computeGepOffset(Type *srcElemTy,
                                               ArrayRef<Value *> Indicies,
                                               const DataLayout &dl) {
-  Type *Ty = ptrTy;
-  assert(Ty->isPointerTy());
+  // Opaque-pointers: caller must pass the GEP's source element type via
+  // GEPOperator::getSourceElementType(); there is no typed pointer anymore.
+  if (!srcElemTy)
+    return std::make_pair(0, 1);
+
+  Type *Ty = srcElemTy;
 
   // numeric offset
   int64_t noffset = 0;
@@ -889,7 +901,6 @@ std::pair<int64_t, uint64_t> computeGepOffset(Type *ptrTy,
   // divisor
   uint64_t divisor = 0;
 
-  Type *srcElemTy = cast<PointerType>(ptrTy)->getElementType();
   generic_gep_type_iterator<Value *const *> TI =
       gep_type_begin(srcElemTy, Indicies);
 
@@ -900,8 +911,10 @@ std::pair<int64_t, uint64_t> computeGepOffset(Type *ptrTy,
       noffset += dl.getStructLayout(STy)->getElementOffset(fieldNo);
       Ty = STy->getElementType(fieldNo);
     } else {
-      if (PointerType *ptrTy = dyn_cast<PointerType>(Ty))
-        Ty = ptrTy->getElementType();
+      if (PointerType *ptrTy = dyn_cast<PointerType>(Ty)) {
+        (void)ptrTy;
+        return std::make_pair(0, 1);
+      }
       else if (Ty->isArrayTy())
         Ty = Ty->getArrayElementType();
       else if (auto vt = dyn_cast<VectorType>(Ty))
@@ -939,8 +952,10 @@ uint64_t computeIndexedOffset(Type *ty, ArrayRef<unsigned> indecies,
       offset += layout->getElementOffset(idx);
       ty = sty->getElementType(idx);
     } else {
-      if (PointerType *ptrTy = dyn_cast<PointerType>(ty))
-        ty = ptrTy->getElementType();
+      if (PointerType *ptrTy = dyn_cast<PointerType>(ty)) {
+        (void)ptrTy;
+        return offset;
+      }
       else if (ty->isArrayTy())
         ty = ty->getArrayElementType();
       else if (auto vt = dyn_cast<VectorType>(ty))
@@ -1006,7 +1021,36 @@ void BlockBuilderBase::visitGep(const Value &gep, const Value &ptr,
     return;
   }
 
-  auto off = computeGepOffset(ptr.getType(), indicies, m_dl);
+  Type *srcElemTy = nullptr;
+  if (auto *GO = dyn_cast<GEPOperator>(&gep))
+    srcElemTy = GO->getSourceElementType();
+
+  // Fast path: for GEPs with all-constant indices, use LLVM's own exact byte
+  // offset computation.  This handles opaque-pointer arrays (e.g. [N x ptr])
+  // correctly — computeGepOffset cannot determine element size for opaque ptr,
+  // which would collapse distinct array elements to the same node.
+  if (auto *GO = dyn_cast<GEPOperator>(&gep)) {
+    APInt constOffset(m_dl.getPointerSizeInBits(), 0, /*isSigned=*/true);
+    if (GO->accumulateConstantOffset(m_dl, constOffset)) {
+      int64_t gepOffset = constOffset.getSExtValue();
+      if (gepOffset >= 0) {
+        m_graph.mkCell(gep, seadsa::Cell(base, (unsigned)gepOffset));
+      } else if ((int64_t)base.getOffset() + gepOffset >= 0) {
+        m_graph.mkCell(gep,
+                       seadsa::Cell(*baseNode,
+                                    (unsigned)((int64_t)base.getOffset() +
+                                               gepOffset)));
+      } else {
+        seadsa::Node &n = m_graph.mkNode();
+        m_graph.mkCell(gep, seadsa::Cell(n, 0));
+        n.unifyAt(*baseNode,
+                  (unsigned)(-(int64_t)base.getOffset() - gepOffset));
+      }
+      return;
+    }
+  }
+
+  auto off = computeGepOffset(srcElemTy, indicies, m_dl);
   if (off.first < 0) {
     if (base.getOffset() + off.first >= 0) {
       m_graph.mkCell(gep,
@@ -1182,7 +1226,7 @@ void IntraBlockBuilder::visitExternalCall(CallBase &I) {
   Cell &c = m_graph.mkCell(I, Cell(m_graph.mkNode(), 0));
   c.getNode()->setExternal();
 
-  if (callee->getName().startswith("verifier.nondet.abstract.memory")) return;
+  if (callee->getName().starts_with("verifier.nondet.abstract.memory")) return;
 
   // TODO: better handling of external funcations
   // TOOD: Use function attributes and external specifications
@@ -1511,7 +1555,8 @@ bool hasNoPointerTy(const llvm::Type *t) {
 
 bool transfersNoPointers(MemTransferInst &MI, const DataLayout &DL) {
   Value *srcPtr = MI.getSource();
-  auto *srcTy = srcPtr->getType()->getPointerElementType();
+  auto *srcTy = seadsa::recoverPointeeType(srcPtr);
+  if (!srcTy) return false;
 
   ConstantInt *rawLength = dyn_cast<ConstantInt>(MI.getLength());
   if (!rawLength) return false;
@@ -1590,7 +1635,7 @@ void IntraBlockBuilder::visitMemTransferInst(MemTransferInst &I) {
 
   if (TrustTypes &&
       ((sourceCell.getNode()->links().size() == 0 &&
-        hasNoPointerTy(I.getSource()->getType()->getPointerElementType())) ||
+        hasNoPointerTy(seadsa::recoverPointeeType(I.getSource()))) ||
        transfersNoPointers(I, m_dl))) {
     /* do nothing */
     // no pointers are copied from source to dest, so there is no
@@ -1646,7 +1691,7 @@ bool BlockBuilderBase::isFixedOffset(const IntToPtrInst &inst, Value *&base,
       }
       offset = C->getZExtValue();
     } else if (auto *LI = dyn_cast<LoadInst>(X)) {
-      PointerType *liType = Type::getInt8PtrTy(LI->getContext());
+      PointerType *liType = PointerType::get(Type::getInt8Ty(LI->getContext()), 0);
       seadsa::Cell ptrCell =
           valueCell(*LI->getPointerOperand()->stripPointerCasts());
       ptrCell.addAccessedType(0, liType);
@@ -1775,8 +1820,8 @@ bool isEscapingPtrToInt(const PtrToIntInst &def) {
           // it if (callee->doesNotAccessMemory())
           //   continue;
           auto n = callee->getName();
-          if (n.startswith("__sea_set_extptr_slot") ||
-              n.equals("verifier.assume") || n.equals("llvm.assume"))
+          if (n.starts_with("__sea_set_extptr_slot") ||
+              n == "verifier.assume" || n == "llvm.assume")
             continue;
         }
       }
@@ -1861,7 +1906,7 @@ void LocalAnalysis::runOnFunction(Function &F, Graph &g) {
   revTopoSort(F, bbs);
   boost::reverse(bbs);
 
-  if (F.getName().equals("main")) {
+  if (F.getName() == "main") {
     GlobalBuilder globalBuilder(F, g, m_dl, tli, m_allocInfo);
     globalBuilder.initGlobalVariables();
   }
