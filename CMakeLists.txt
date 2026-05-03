@@ -114,6 +114,15 @@ if (TOP_LEVEL)
   endif ()
 endif ()
 
+# Embedded build (e.g. as a subdirectory of cir-tac): parent provides LLVM via
+# AddLLVM; we still need Boost headers for Graph.cc.
+if (NOT TOP_LEVEL)
+  if (NOT Boost_FOUND)
+    find_package(Boost 1.65 REQUIRED)
+  endif()
+  include_directories(${Boost_INCLUDE_DIRS})
+endif()
+
 # sea-dsa specific
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
@@ -137,9 +146,13 @@ include_directories(
   ${CMAKE_CURRENT_BINARY_DIR}/include)
 
 add_subdirectory(lib/seadsa)
-add_subdirectory(units)
-add_subdirectory(tools)
-add_subdirectory(tests)
+
+option(SEA_DSA_BUILD_TOOLS_TESTS "Build Sea-dsa tools, unit tests, and integration tests" ON)
+if(SEA_DSA_BUILD_TOOLS_TESTS)
+  add_subdirectory(units)
+  add_subdirectory(tools)
+  add_subdirectory(tests)
+endif()
 
 install(DIRECTORY include/seadsa DESTINATION include
   FILES_MATCHING

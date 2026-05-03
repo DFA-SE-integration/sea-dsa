@@ -123,6 +123,18 @@ void SeaDsaAAResult::runOnModule(Module &M) {
   m_dsa->runOnModule(M);
 }
 
+Graph *SeaDsaAAResult::getGraph(const Function &F) {
+  if (!m_dsa || !m_dsa->hasGraph(F))
+    return nullptr;
+  return &m_dsa->getGraph(F);
+}
+
+const Graph *SeaDsaAAResult::getGraph(const Function &F) const {
+  if (!m_dsa || !m_dsa->hasGraph(F))
+    return nullptr;
+  return &m_dsa->getGraph(F);
+}
+
 AliasResult SeaDsaAAResult::alias(const MemoryLocation &LocA,
                                   const MemoryLocation &LocB) {
   DOG(errs() << "SeaDsaAA --- Alias query: " << *LocA.Ptr << " and "

@@ -47,6 +47,10 @@ public:
   /// re-runs only happen when the module handle changes.
   void runOnModule(llvm::Module &M);
 
+  /// After \c runOnModule, return the DSA graph for \p F, or nullptr if none.
+  Graph *getGraph(const llvm::Function &F);
+  const Graph *getGraph(const llvm::Function &F) const;
+
   /// Query whether two pointer values may alias.
   ///
   /// Falls back to \c MayAlias whenever SeaDsa cannot prove disjointness or
