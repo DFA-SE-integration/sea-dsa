@@ -28,7 +28,7 @@ namespace seadsa {
 
 class AllocWrapInfo;
 class DsaLibFuncInfo;
-class BottomUpTopDownGlobalAnalysis;
+class ContextInsensitiveGlobalAnalysis;
 
 /// Standalone SeaDsa-based alias analysis.
 ///
@@ -69,7 +69,7 @@ private:
   llvm::Module *m_module = nullptr;
   std::unique_ptr<Graph::SetFactory> m_fac;
   std::unique_ptr<llvm::CallGraph> m_cg;
-  std::unique_ptr<BottomUpTopDownGlobalAnalysis> m_dsa;
+  std::unique_ptr<ContextInsensitiveGlobalAnalysis> m_dsa;
 };
 
 } // namespace seadsa

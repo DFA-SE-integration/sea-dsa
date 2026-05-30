@@ -117,8 +117,8 @@ void SeaDsaAAResult::runOnModule(Module &M) {
   m_fac = std::make_unique<Graph::SetFactory>();
   m_cg = std::make_unique<CallGraph>(M);
   m_awi.initialize(M, nullptr);
-  m_dsa = std::make_unique<BottomUpTopDownGlobalAnalysis>(
-      *m_dl, m_tliWrapper, m_awi, m_dlfi, *m_cg, *m_fac);
+  m_dsa = std::make_unique<ContextInsensitiveGlobalAnalysis>(
+      *m_dl, m_tliWrapper, m_awi, m_dlfi, *m_cg, *m_fac, /*useFlatMemory=*/true);
   DOG(errs() << "Running SeaDsaAA.\n");
   m_dsa->runOnModule(M);
 }
